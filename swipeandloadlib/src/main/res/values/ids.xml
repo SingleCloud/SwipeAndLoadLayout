@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="refresh_header" type="id"/>
+    <item name="load_footer" type="id"/>
+
+</resources>
