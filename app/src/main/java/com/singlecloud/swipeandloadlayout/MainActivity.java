@@ -1,5 +1,6 @@
 package com.singlecloud.swipeandloadlayout;
 
+import android.os.Handler;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.View;
@@ -41,8 +42,8 @@ public class MainActivity extends AppCompatActivity {
                 new String[]{"name", "content"},
                 new int[]{R.id.tv_item_name, R.id.tv_item_content});
         lvMain.setAdapter(mAdapter);
-        final View view = View.inflate(this,R.layout.item_main,null);
-        final View view2 = View.inflate(this,R.layout.item_main,null);
+        final View view = View.inflate(this, R.layout.item_main, null);
+        final View view2 = View.inflate(this, R.layout.item_main, null);
         stlRoot.setHeaderView(view, new IViewScrollListener() {
 
             @Override
@@ -57,12 +58,12 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onExecuting() {
-
+                ((TextView) view.findViewById(R.id.tv_item_content)).setText("正在刷新");
             }
 
             @Override
             public void onThreshold(boolean willBeExecuted) {
-                ((TextView) view.findViewById(R.id.tv_item_content)).setText(willBeExecuted?"松开刷新":"内容");
+                ((TextView) view.findViewById(R.id.tv_item_content)).setText(willBeExecuted ? "松开刷新" : "内容");
             }
         });
         stlRoot.setFooterView(view2, new IViewScrollListener() {
@@ -87,5 +88,6 @@ public class MainActivity extends AppCompatActivity {
 
             }
         });
+        stlRoot.setOnRefreshListener(() -> new Handler().postDelayed(()-> stlRoot.onRefreshCompleted(),2000));
     }
 }

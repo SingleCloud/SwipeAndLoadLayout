@@ -1,15 +1,19 @@
 package com.singlecloud.swipeandloadlib;
 
+import android.animation.Animator;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.os.Build;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListView;
 import android.widget.RelativeLayout;
+
+import java.lang.ref.WeakReference;
 
 public class SwipeAndLoadLayout extends RelativeLayout {
 
@@ -21,16 +25,24 @@ public class SwipeAndLoadLayout extends RelativeLayout {
     private IViewScrollListener mFooterListener;
     private View mTarget;
 
+    private int mAnimationTime = 500;
+
     private boolean mIsRefreshEnable, mIsLoadMoreEnable;
     private boolean mIsRefreshing, mIsLoadingMore;
     private boolean mIsDraggingHeader, mIsDraggingFooter;
 
+    private OnRefreshListener mOnRefreshListener;
+    private OnLoadMoreListener mOnLoadMoreListener;
 
     private float mLastPressedY;
     private float mInitialPressedX, mInitialPressedY;
+
     private int mDragDistance;
     private int mMaxDragHeight;
 
+    /**
+     * the default height of header/footer
+     */
     private int mHeaderOffset, mFooterOffset;
 
     /**
@@ -82,36 +94,87 @@ public class SwipeAndLoadLayout extends RelativeLayout {
         super.onLayout(changed, l, t, r, b);
     }
 
+    public void onRefreshCompleted() {
+        mIsRefreshing = false;
+        ViewWrapper wrapper = new ViewWrapper(mHeaderView);
+        ObjectAnimator anim = ObjectAnimator.ofInt(wrapper, "marginTop", 0, mHeaderOffset);
+        anim.setDuration(mAnimationTime);
+        anim.addListener(new SimpleAnimatorListener() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                mHeaderView.setVisibility(GONE);
+            }
+        });
+        anim.start();
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
-                mInitialPressedY = event.getY();
+                mLastPressedY = mInitialPressedY = event.getY();
                 break;
             case MotionEvent.ACTION_MOVE:
                 if (mIsRefresh) {
-                    mHeaderView.setVisibility(VISIBLE);
-                    LayoutParams params = (LayoutParams) mHeaderView.getLayoutParams();
-                    mDragDistance = Math.min((int) (mLastPressedY - mInitialPressedY), mMaxDragHeight);
-                    params.topMargin = (mHeaderOffset + mDragDistance) < mHeaderOffset ? mHeaderOffset : (mHeaderOffset + mDragDistance);
-                    mHeaderView.setLayoutParams(params);
-                    mHeaderListener.onThreshold(mHeaderView.getTop() >= 0);
+                    if (mHeaderView.getTop() <= 0) {
+                        mHeaderView.setVisibility(VISIBLE);
+                        LayoutParams params = (LayoutParams) mHeaderView.getLayoutParams();
+                        mDragDistance = Math.min((int) (mLastPressedY - mInitialPressedY), mMaxDragHeight);
+                        params.topMargin = (mHeaderOffset + mDragDistance);
+                        mHeaderView.setLayoutParams(params);
+                        mHeaderListener.onThreshold(mHeaderView.getTop() >= 0);
+                    } else {
+                        float temp = (Math.abs(mHeaderOffset) + (mLastPressedY - mInitialPressedY - Math.abs(mHeaderOffset)));
+                        float height = temp > mMaxDragHeight ?mMaxDragHeight:temp;
+                        mHeaderView.getLayoutParams().height = (int) height;
+                        mHeaderView.requestLayout();
+                    }
                 } else {
                     mFooterView.setVisibility(VISIBLE);
                     LayoutParams params = (LayoutParams) mFooterView.getLayoutParams();
-                    mDragDistance = Math.min((int) (mInitialPressedY - mLastPressedY), mMaxDragHeight);
-                    params.bottomMargin = mFooterOffset - mDragDistance;
+                    mDragDistance = (int) Math.min(mLastPressedY - mInitialPressedY, 0 - mMaxDragHeight);
+                    params.bottomMargin = (mFooterOffset + Math.abs(mDragDistance));
                     mFooterView.setLayoutParams(params);
                     mFooterListener.onThreshold(mFooterView.getBottom() >= 0);
                 }
                 mLastPressedY = event.getY();
                 break;
             case MotionEvent.ACTION_UP:
-                Log.i(TAG, "onAction Up");
                 if (mIsRefresh) {
                     mIsDraggingHeader = false;
                     if (mHeaderView.getTop() >= 0) {
-
+                        ViewWrapper wrapper = new ViewWrapper(mHeaderView);
+                        ObjectAnimator animHeight = ObjectAnimator.ofInt(wrapper, "height", ((LayoutParams) mHeaderView.getLayoutParams()).height, Math.abs(mHeaderOffset));
+                        ObjectAnimator animMargin = ObjectAnimator.ofInt(wrapper, "marginTop", ((LayoutParams) mHeaderView.getLayoutParams()).topMargin, 0);
+                        AnimatorSet set = new AnimatorSet();
+                        set.play(animHeight).with(animMargin);
+                        set.setDuration(mAnimationTime);
+                        set.addListener(new SimpleAnimatorListener() {
+                            @Override
+                            public void onAnimationEnd(Animator animation, boolean isReverse) {
+                                mHeaderListener.onExecuting();
+                                mIsRefreshing = true;
+                                if (mOnRefreshListener != null)
+                                    mOnRefreshListener.onRefresh();
+                            }
+                        });
+                        set.start();
+                    } else {
+                        if (mHeaderView.getBottom() >= 0) {
+                            ViewWrapper wrapper = new ViewWrapper(mHeaderView);
+                            ObjectAnimator anim = ObjectAnimator.ofInt(wrapper, "marginTop", mHeaderView.getTop(), mHeaderOffset);
+                            anim.setDuration(mAnimationTime);
+                            anim.addListener(new SimpleAnimatorListener() {
+                                @Override
+                                public void onAnimationEnd(Animator animation) {
+                                    mHeaderView.setVisibility(GONE);
+                                }
+                            });
+                            anim.start();
+                        } else {
+                            ((LayoutParams) mHeaderView.getLayoutParams()).topMargin = mHeaderOffset;
+                            mHeaderView.setVisibility(GONE);
+                        }
                     }
                 } else {
                     mIsDraggingFooter = false;
@@ -127,17 +190,14 @@ public class SwipeAndLoadLayout extends RelativeLayout {
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         switch (ev.getAction()) {
             case MotionEvent.ACTION_DOWN:
-                mInitialPressedY = ev.getY();
                 mInitialPressedX = ev.getX();
+                mLastPressedY = mInitialPressedY = ev.getY();
                 break;
             case MotionEvent.ACTION_MOVE:
                 if (mIsRefreshing) return super.onInterceptTouchEvent(ev);
                 if (mIsLoadingMore) return super.onInterceptTouchEvent(ev);
-                float y = ev.getY();
-                float x = ev.getX();
-                final float yInitDiff = y - mInitialPressedY;
-                final float xInitDiff = x - mInitialPressedX;
-                mLastPressedY = y;
+                final float yInitDiff = ev.getY() - mInitialPressedY;
+                final float xInitDiff = ev.getX() - mInitialPressedX;
                 boolean moved = Math.abs(yInitDiff) > Math.abs(xInitDiff) && Math.abs(yInitDiff) > 0;
                 boolean canRefresh = mIsRefreshEnable && yInitDiff > 0 && moved && !canAnyChildScrollDown(mTarget);
                 boolean canLoadMore = mIsLoadMoreEnable && yInitDiff < 0 && moved && !canAnyChildScrollUp(mTarget);
@@ -172,6 +232,14 @@ public class SwipeAndLoadLayout extends RelativeLayout {
         return super.performClick();
     }
 
+    public void setOnRefreshListener(OnRefreshListener onRefreshListener) {
+        this.mOnRefreshListener = onRefreshListener;
+    }
+
+    public void setOnLoadMoreListener(OnLoadMoreListener onLoadMoreListener) {
+        this.mOnLoadMoreListener = onLoadMoreListener;
+    }
+
     public void setHeaderView(View view) {
         if (view instanceof IViewScrollListener) {
             this.mHeaderListener = (IViewScrollListener) view;
@@ -193,9 +261,6 @@ public class SwipeAndLoadLayout extends RelativeLayout {
         paramsHeader.addRule(ALIGN_PARENT_TOP);
         mHeaderView.setId(R.id.refresh_header);
         this.mHeaderView.setLayoutParams(paramsHeader);
-        LayoutParams paramsTarget = (LayoutParams) mTarget.getLayoutParams();
-        paramsTarget.addRule(BELOW, R.id.refresh_header);
-        this.mTarget.setLayoutParams(paramsTarget);
         this.mHeaderView.setVisibility(GONE);
         addView(mHeaderView);
         mMaxDragHeight = (int) (Math.abs(height) * 1.618);
@@ -226,9 +291,6 @@ public class SwipeAndLoadLayout extends RelativeLayout {
         paramsFooter.bottomMargin = mFooterOffset;
         paramsFooter.addRule(ALIGN_PARENT_BOTTOM);
         this.mFooterView.setLayoutParams(paramsFooter);
-        LayoutParams paramsTarget = (LayoutParams) mTarget.getLayoutParams();
-        paramsTarget.addRule(ABOVE, mFooterView.getId());
-        this.mTarget.setLayoutParams(paramsTarget);
         this.mFooterView.setVisibility(GONE);
         addView(mFooterView);
         mMaxDragHeight = (int) (Math.abs(height) * 1.618);
@@ -261,10 +323,6 @@ public class SwipeAndLoadLayout extends RelativeLayout {
 
     public boolean isRefreshing() {
         return mIsRefreshing;
-    }
-
-    public void refreshCompleted() {
-        this.mIsRefreshing = false;
     }
 
     public void loadMoreCompleted() {
@@ -317,6 +375,65 @@ public class SwipeAndLoadLayout extends RelativeLayout {
                 k++;
             }
             return canScroll;
+        }
+    }
+
+    private abstract class SimpleAnimatorListener implements Animator.AnimatorListener {
+
+        @Override
+        public void onAnimationStart(Animator animation, boolean isReverse) {
+
+        }
+
+        @Override
+        public void onAnimationEnd(Animator animation, boolean isReverse) {
+
+        }
+
+        @Override
+        public void onAnimationStart(Animator animation) {
+
+        }
+
+        @Override
+        public void onAnimationEnd(Animator animation) {
+
+        }
+
+        @Override
+        public void onAnimationCancel(Animator animation) {
+
+        }
+
+        @Override
+        public void onAnimationRepeat(Animator animation) {
+
+        }
+    }
+
+    private static class ViewWrapper {
+        private WeakReference<View> mWeak;
+
+        private ViewWrapper(View view) {
+            mWeak = new WeakReference<>(view);
+        }
+
+        private void setMarginTop(int marginTop) {
+            if (mWeak == null) return;
+            ((LayoutParams) mWeak.get().getLayoutParams()).topMargin = marginTop;
+            mWeak.get().requestLayout();
+        }
+
+        private void setMarginBottom(int marginBottom) {
+            if (mWeak == null) return;
+            ((LayoutParams) mWeak.get().getLayoutParams()).bottomMargin = marginBottom;
+            mWeak.get().requestLayout();
+        }
+
+        private void setHeight(int height) {
+            if (mWeak == null) return;
+            ((LayoutParams) mWeak.get().getLayoutParams()).height = height;
+            mWeak.get().requestLayout();
         }
     }
 }
